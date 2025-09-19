@@ -728,7 +728,8 @@ local function HandleUnitSpellStart(unitId, unitState, nameplate)
         if not canReflectIt and SecretVeganToolsDB.PlaySoundOnInterruptTurn then
             if unitState.group and unitState.group.kicks then
                 for i, kick in ipairs(unitState.group.kicks) do
-                    if UnitName("player") == kick then
+                    local kickMainName = playerAliases[kick] or kick
+                    if UnitName("player") == kickMainName then
                         C_VoiceChat.SpeakText(1, mrtMark .. " going off", Enum.VoiceTtsDestination.LocalPlayback, 0, 100)
                         break
                     end
