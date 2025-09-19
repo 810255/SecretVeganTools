@@ -389,13 +389,16 @@ local raidTargetToMrtMark = {
     [8] = "skull",
 }
 
-local function table_size(t)
-    local count = 0
-    if t then
-        for _ in pairs(t) do count = count + 1 end
-    end
-    return count
-end
+local mrtMarkToRaidTarget = {
+    star     = 1,
+    circle   = 2,
+    diamond  = 3,
+    triangle = 4,
+    moon     = 5,
+    square   = 6,
+    cross    = 7,
+    skull    = 8,
+}
 
 local function ParseMRTNote()
     groups = {}
@@ -1057,20 +1060,55 @@ local function ToggleReflectTestMode()
     end
 end
 
+local function padRight(str, length)
+    local n = length - #str
+    if n > 0 then
+        return str .. string.rep(" ", n * 2)
+    else
+        return str:sub(1, length)  -- truncate if longer
+    end
+end
+
+local function RaidIcon(id)
+    local size = 14
+    local tex = "Interface\\TargetingFrame\\UI-RaidTargetingIcons"
+    -- Atlas layout (64x64 each on a 256x256 sheet)
+    local coords = {
+        [1] = {0,   0.25, 0,    0.25}, -- star
+        [2] = {0.25,0.50, 0,    0.25}, -- circle
+        [3] = {0.50,0.75, 0,    0.25}, -- diamond
+        [4] = {0.75,1.00, 0,    0.25}, -- triangle
+        [5] = {0,   0.25, 0.25, 0.50}, -- moon
+        [6] = {0.25,0.50, 0.25, 0.50}, -- square
+        [7] = {0.50,0.75, 0.25, 0.50}, -- cross
+        [8] = {0.75,1.00, 0.25, 0.50}, -- skull
+    }
+    local c = coords[id]
+    if not c then return "" end
+    return ("|T%s:%d:%d:0:0:256:256:%d:%d:%d:%d|t"):format(
+        tex, size, size,
+        c[1]*256, c[2]*256, c[3]*256, c[4]*256
+    )
+end
+
+local function markersToRaidTags(markers)
+    local out = {}
+    for _, name in ipairs(markers) do
+        table.insert(out, RaidIcon(mrtMarkToRaidTarget[name]))
+    end
+    return table.concat(out, " ")
+end
+
 local function FormatParseResults()
     local t = {} -- Use a table for efficient string building
 
-    -- Header
-    table.insert(t, "|cffffd100SVT Parsed MRT Note Results|r")
-    table.insert(t, "|cff888888" .. date() .. "|r\n")
-
     -- Aliases Section
-    table.insert(t, "\n|cffffff00--- Player Aliases ---|r")
+    table.insert(t, "|cffffff00--- Player Aliases ---|r")
     if next(playerAliases) == nil then
         table.insert(t, "  No aliases found.")
     else
         for character, main in pairs(playerAliases) do
-            table.insert(t, string.format("  %-20s -> %s", character, main))
+            table.insert(t, padRight(character, 12) .. " -> " .. main)
         end
     end
 
@@ -1093,12 +1131,13 @@ local function FormatParseResults()
     else
         for _, group in ipairs(groups) do
             table.insert(t, "\n|cff00ccffGroup:|r " .. group.name)
-            table.insert(t, "  |cffaaaaaaMarkers:|r " .. table.concat(group.markers, ", "))
+            table.insert(t, "  |cffaaaaaaMarkers:|r " .. markersToRaidTags(group.markers))
             table.insert(t, "  |cffaaaaaaKicks:|r " .. table.concat(group.kicks, ", "))
             table.insert(t, "  |cffaaaaaaBackups:|r " .. (#group.backups > 0 and table.concat(group.backups, ", ") or "None"))
             local stops = {}
             for _, stopInfo in ipairs(group.stops) do
-                table.insert(stops, stopInfo.player .. " (" .. tostring(stopInfo.spellId) .. ")")
+                local stopSpellInfo = C_Spell.GetSpellInfo(stopInfo.spellId)
+                table.insert(stops, stopInfo.player .. " |T" .. stopSpellInfo.iconID .. ":16:16|t")
             end
             table.insert(t, "  |cffaaaaaaStops:|r " .. (#stops > 0 and table.concat(stops, ", ") or "None"))
         end
