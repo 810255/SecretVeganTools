@@ -500,13 +500,13 @@ local function ParseMRTNote()
             if string.lower(line) == "svtaliasend" then
                 break
             end
-            if line ~= "" and not line:find("^%s*--") then
+            if line ~= "" then
                 local splitLine = SplitResponse(line, " ")
-                local mainName = splitLine[1]
+                local mainName = ParsePlayerName(splitLine[1])
                 if mainName then
                     playerAliases[mainName] = mainName
                     for j = 2, #splitLine do
-                        local altName = splitLine[j]
+                        local altName = ParsePlayerName(splitLine[j])
                         if altName and altName ~= "" then playerAliases[altName] = mainName end
                     end
                 end
