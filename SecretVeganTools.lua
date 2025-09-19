@@ -1204,6 +1204,7 @@ end
 local function ToggleParseResultWindow()
     if not parseResultFrame then
         parseResultFrame = CreateParseResultWindow()
+        parseResultFrame:Hide()
     end
 
     if parseResultFrame:IsShown() then
