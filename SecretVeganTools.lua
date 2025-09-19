@@ -168,26 +168,6 @@ local function CreateInterruptAnchor(nameplate)
     interruptFrame.reflectIcon = reflectIcon
 end
 
--- Function that returns a colored unit name based on class
-local function GetColoredUnitClassAndName(unit)
-    -- Get the unit's class and name
-    local unitName = UnitName(unit)
-    local _, class = UnitClass(unit)
-
-    if not unitName or not class then
-        return ""
-    end
-
-    local classColor = RAID_CLASS_COLORS[class]
-    if classColor then
-        local colorCode = string.format("|cff%02x%02x%02x", classColor.r * 255, classColor.g * 255, classColor.b * 255)
-        return colorCode .. unitName .. "|r"
-    else
-        return unitName
-    end
-end
-
-
 local function IsSpellReflectableAndReflectIsOffCD(caster, target, spellId)
     local veganData = veganPartyData[UnitGUID(target)]
 
@@ -547,15 +527,6 @@ local function TryParseMrt()
     end
 end
 
-local function GetRaidIconText(unitID)
-    local icon = GetRaidTargetIndex(unitID)
-
-    if icon == nil then
-        return ""
-    end
-
-    return " |TInterface\\TargetingFrame\\UI-RaidTargetingIcon_" .. icon .. ":0|t"
-end
 local function HandleReflect(nameplate, castName, castID, spellId, unitID, startTime, endTime)
     if isReflectTestActive and nameplate == reflectTestNameplate then return false, false end
     if castName == nil or spellId == nil or spellId <= 0 or endTime == nil then
@@ -1460,7 +1431,7 @@ SlashCmdList["SECRETVEGANTOOLS"] = function(msg)
         TryParseMrt()
         InitAllUnits()
     elseif command == "config" then
-        InterfaceOptionsFrame_OpenToCategory("SecretVeganTools")
+        Settings.OpenToCategory("SecretVeganTools")
     elseif command == "test" then
         ToggleTestMode()
     elseif command == "testreflect" then
