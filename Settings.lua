@@ -72,6 +72,36 @@ local function InitAddonSettings()
         Settings.CreateCheckbox(category, setting, tooltip)
     end
 
+    do
+        local name = "Interrupt X Offset"
+        local variable = "InterruptXOffset"
+        local variableKey = "InterruptXOffset"
+        local defaultValue = 8
+
+        local setting = Settings.RegisterAddOnSetting(category, variable, variableKey, SecretVeganToolsDB, type(defaultValue), name, defaultValue)
+        setting:SetValueChangedCallback(function(_, v) NS.ReanchorAllNameplates() end)
+        local options = Settings.CreateSliderOptions(-10, 100, 1)
+        options:SetLabelFormatter(MinimalSliderWithSteppersMixin.Label.Right, function(value) return value end);
+
+        local tooltip = "Pixels to the right of the nameplate."
+        Settings.CreateSlider(category, setting, options, tooltip)
+    end
+
+    do
+        local name = "Reflect X Offset"
+        local variable = "ReflectXOffset"
+        local variableKey = "ReflectXOffset"
+        local defaultValue = -8
+
+        local setting = Settings.RegisterAddOnSetting(category, variable, variableKey, SecretVeganToolsDB, type(defaultValue), name, defaultValue)
+        setting:SetValueChangedCallback(function(_, v) NS.ReanchorAllNameplates() end)
+        local options = Settings.CreateSliderOptions(-100, 10, 1)
+        options:SetLabelFormatter(MinimalSliderWithSteppersMixin.Label.Right, function(value) return value end);
+
+        local tooltip = "Pixels to the left of the nameplate."
+        Settings.CreateSlider(category, setting, options, tooltip)
+    end
+
     Settings.RegisterAddOnCategory(category)
 end
 
