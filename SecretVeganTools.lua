@@ -1474,13 +1474,12 @@ local function InitAddon()
 end
 
 local function ShouldInitAddon()
-    return true
-    -- local inInstance = IsInInstance()
-    -- if not inInstance then return false end
--- 
-    -- local _, _, difficultyID = GetInstanceInfo()
+    local inInstance = IsInInstance()
+    if not inInstance then return false end
+
+    local _, _, difficultyID = GetInstanceInfo()
     -- 1 = Normal, 2 = Heroic, 8 = Mythic+, 23 = Mythic
-    -- return difficultyID == 1 or difficultyID == 2 or difficultyID == 8 or difficultyID == 23
+    return difficultyID == 1 or difficultyID == 2 or difficultyID == 8 or difficultyID == 23
 end
 
 local function TryHookMRT()
