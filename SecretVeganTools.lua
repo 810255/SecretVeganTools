@@ -20,9 +20,12 @@ local nameplateFrames = {}
 -- Table to track party member data
 ---@class VeganData
 ---@field unitID string
----@field specId integer
 ---@field interruptSpellId integer
 ---@field reflectCooldown integer?
+---@field reflectAuraInstanceId integer?
+---@field hasReflectUp boolean?
+---@field reflectEndTime number?
+---@field reflectTtsCooldown number?
 ---@field spellAvailableTime table<integer, integer>?
 ---@type table<string, VeganData>
 local veganPartyData = {}
@@ -214,25 +217,6 @@ local function HidePlateWidgets(nameplate)
     HideReflectFrame(nameplate)
 end
 
-local function IsSpellReflectableAndReflectIsOffCD(caster, target, spellId)
-    local veganData = veganPartyData[UnitGUID(target)]
-
-    if veganData == nil then
-        return false
-    end
-
-    local class, _, _ = UnitClass(target)
-    if class == "Warrior" then
-        if veganData.reflectCooldown ~= nil and veganData.reflectCooldown >= GetTime() then
-            return false
-        end
-
-        return NS.g_ReflectionSpells[spellId] ~= nil
-    end
-
-    return false
-end
-
 ---@return UnitToken?
 local function GetUnitIDAndGuidInPartyOrSelfByName(name)
     -- Find the "main" name for the name listed in the note, falling back to the name itself.
@@ -353,15 +337,15 @@ local function IterateSelfAndPartyMembers()
     end
 end
 
-local function IsNamePlateFirstCastThatCanReflect(p_NamePlate, p_EndTime, p_TargetGUID)
+local function IsFirstCastThatCanReflect(endTime, targetGuid)
     for unitID, nameplate in pairs(nameplateFrames) do
-        local castName, _, _, startTime, endTime, _, _, notInterruptible, spellId = UnitCastingInfo(unitID)
-        if castName ~= nil and spellId ~= nil and spellId > 0 and endTime ~= nil and UnitGUID(unitID.."-target") == p_TargetGUID then
-            if GetTime() < endTime / 1000 then
-                if endTime < p_EndTime then
-                    return false
-                end
-            end
+        local castName, _, _, _, endTimeOther, _, _, _, spellId = UnitCastingInfo(unitID)
+        if (
+          castName and spellId and spellId > 0 and endTimeOther and
+          UnitGUID(unitID .. "-target") == targetGuid and
+          GetTime() < endTimeOther / 1000 and endTimeOther < endTime
+        ) then
+            return false
         end
     end
 
@@ -427,16 +411,16 @@ local mrtMarkToRaidTarget = {
 }
 
 local function ParseMRTNote()
+    local mrtText = GetMRTNoteData()
+
     groups = {}
     npcConfigs = {}
     playerAliases = {}
     priorityPlayers = {} -- Reset priority players table
 
-    local mrtText = GetMRTNoteData()
+    if mrtText == nil then return end
 
-    if mrtText == nil then
-        return
-    end
+    print("SVT: Parsing MRT note data...")
 
     local lines = SplitResponse(mrtText, "\n")
 
@@ -574,71 +558,54 @@ local function TryParseMrt()
     end
 end
 
-local function HandleReflect(nameplate, castName, castID, spellId, unitID, startTime, endTime)
+local function HandleReflect(nameplate, castName, spellId, casterId, endTime)
+    nameplate.reflectIcon:Hide()
+    nameplate.reflectIcon.text:SetText("Reflect?")
+    local now = GetTime()
+
     if isTestModeActive and nameplate == testModeNameplate then return false, false end
-    if castName == nil or spellId == nil or spellId <= 0 or endTime == nil then
-        if nameplate.reflectIcon:IsShown() then
-            nameplate.reflectIcon:Hide()
+    if not castName or not spellId or spellId <= 0 or not endTime then return false, false end
+    if now >= endTime / 1000 then return false, false end
+    if not NS.g_ReflectionSpells[spellId] then return false, false end
+
+    local casterTarget = casterId .. "-target"
+    local targetGuid = UnitGUID(casterTarget)
+    if targetGuid == nil or not UnitInParty(casterTarget) then return false, false end
+
+    local isWarrior = UnitClass(casterTarget) == "Warrior"
+    if not isWarrior then return false, false end
+    if not IsFirstCastThatCanReflect(endTime, targetGuid) then return false, false end
+
+    -- If the warrior doesn't have SVT, create mock vegan data for them
+    if veganPartyData[targetGuid] == nil then
+        veganPartyData[targetGuid] = {
+            interruptSpellId = 6552, -- Pummel
+            unitID = GetUnitIDInPartyOrSelfByGuid(targetGuid),
+        }
+    end
+
+    local reflectInfo = veganPartyData[targetGuid]
+    local willBeReflected = reflectInfo.hasReflectUp and reflectInfo.reflectEndTime and reflectInfo.reflectEndTime >= endTime / 1000
+    local isReflectAvailable = not reflectInfo.reflectCooldown or now >= reflectInfo.reflectCooldown
+    local canReflectIt = isReflectAvailable or willBeReflected
+
+    -- Can reflect but has not necessarily pressed it yet
+    if canReflectIt then
+        nameplate.reflectIcon:Show()
+    end
+
+    -- Is actively reflecting
+    if willBeReflected then
+        nameplate.reflectIcon.text:SetText("Reflecting")
+
+        -- Play Reflect TTS on a 10 second cooldown
+        if SecretVeganToolsDB.PlaySoundOnReflect and (reflectInfo.reflectTtsCooldown == nil or now > reflectInfo.reflectTtsCooldown) then
+            C_VoiceChat.SpeakText(1, "Reflect", Enum.VoiceTtsDestination.LocalPlayback, 0, 100)
+            reflectInfo.reflectTtsCooldown = now + 10
         end
-        return false, false
     end
 
-    if castID == nameplate.failedCastID then
-        HidePlateWidgets(nameplate)
-        return false, false
-    end
-
-    if GetTime() >= endTime / 1000 then
-        HidePlateWidgets(nameplate)
-        return false, false
-    end
-
-    local warrHasReflectAuraUp = false
-    local canReflectIt = false
-
-    local targetGuid = UnitGUID(unitID.."-target")
-    if targetGuid ~= nil and UnitInParty(unitID.."-target") then
-        local reflectInfo = veganPartyData[targetGuid]
-        if UnitClass(unitID.."-target") == "Warrior" then
-            if reflectInfo == nil then
-                veganPartyData[targetGuid] = {}
-                veganPartyData[targetGuid].unitID = GetUnitIDInPartyOrSelfByGuid(targetGuid)
-                reflectInfo = veganPartyData[targetGuid]
-            end
-        end
-        if NS.g_ReflectionSpells[spellId] ~= nil and IsNamePlateFirstCastThatCanReflect(nameplate, endTime, targetGuid) then
-            if reflectInfo and reflectInfo.hasReflect and reflectInfo.reflectEndTime and reflectInfo.reflectEndTime > GetTime() then
-                warrHasReflectAuraUp = true
-            end
-
-            local isReflectAvailable = IsSpellReflectableAndReflectIsOffCD(unitID, unitID.."-target", spellId)
-            if not nameplate.reflectIcon:IsShown() and (isReflectAvailable or warrHasReflectAuraUp) then
-                nameplate.reflectIcon:Show()
-                canReflectIt = true
-            elseif not isReflectAvailable and not warrHasReflectAuraUp then
-                nameplate.reflectIcon:Hide()
-            end
-
-            if warrHasReflectAuraUp then
-                nameplate.reflectIcon.text:SetText("Reflecting")
-
-                if SecretVeganToolsDB.PlaySoundOnReflect then
-                    if reflectInfo.reflectSoundAnnounce == nil or GetTime() > reflectInfo.reflectSoundAnnounce then
-                        -- If the cooldown has expired, play the sound and set the new 10-second cooldown for this specific warrior.
-                        C_VoiceChat.SpeakText(1, "Reflect", Enum.VoiceTtsDestination.LocalPlayback, 0, 100)
-                        reflectInfo.reflectSoundAnnounce = GetTime() + 10
-                    end
-                end
-            end
-
-        elseif nameplate.reflectIcon:IsShown() then
-            nameplate.reflectIcon:Hide()
-        end
-    elseif nameplate.reflectIcon:IsShown() then
-        nameplate.reflectIcon:Hide()
-    end
-
-    return warrHasReflectAuraUp, canReflectIt
+    return willBeReflected, canReflectIt
 end
 
 function GetNpcConfig(unitGuid)
@@ -683,9 +650,9 @@ end
 ---@param kickBox KickBox
 ---@param kickAssignment KickAssignment?
 ---@param isCasting boolean
----@param warrHasReflectAuraUp boolean?
+---@param willBeReflected boolean?
 ---@param isTargetPriority boolean?
-local function ConfigureKickBox(kickBox, kickAssignment, isCasting, warrHasReflectAuraUp, isTargetPriority)
+local function ConfigureKickBox(kickBox, kickAssignment, isCasting, willBeReflected, isTargetPriority)
     if kickBox.pulseAnimation then
         kickBox.pulseAnimation:Stop()
         kickBox:SetScale(1.0) -- Reset scale and animation
@@ -702,7 +669,7 @@ local function ConfigureKickBox(kickBox, kickAssignment, isCasting, warrHasRefle
     kickBox.icon:SetTexture(C_Spell.GetSpellTexture(kickAssignment.spellId))
 
     if isCasting then
-        if kickAssignment.unitId == "player" and not warrHasReflectAuraUp then
+        if kickAssignment.unitId == "player" and not willBeReflected then
             kickBox.icon:SetAlpha(1)
             SetBorderGreen(kickBox)
             if isTargetPriority then kickBox.pulseAnimation:Play() end
@@ -740,12 +707,11 @@ end
 ---@param unitId string
 ---@param unitState UnitState
 ---@param nameplate SvtNameplate
-local function HandleUnitSpellStart(unitId, unitState, nameplate)
+local function HandleUnitSpellStart(unitId, unitState, nameplate, willBeReflected, canReflectIt)
     local raidTarget = GetRaidTargetIndex(unitId)
     local mrtMark = raidTargetToMrtMark[raidTarget]
-    local castName, _, _, startTime, endTime, _, castID, notInterruptible, spellId = UnitCastingInfo(unitId)
+    local _, _, _, _, endTime = UnitCastingInfo(unitId)
 
-    local warrHasReflectAuraUp, canReflectIt = HandleReflect(nameplate, castName, castID, spellId, unitId, startTime, endTime)
     local isTargetPriority = IsPriorityTarget(unitId)
 
     local kickAssignment = GetKickAssignment(unitState, endTime / 1000)
@@ -757,7 +723,7 @@ local function HandleUnitSpellStart(unitId, unitState, nameplate)
         nextKickAssignment = GetKickAssignment(unitState, nextEndTimeToUse, kickAssignment)
     end
 
-    ConfigureKickBox(nameplate.interruptFrame.kickBox, kickAssignment, true, warrHasReflectAuraUp, isTargetPriority)
+    ConfigureKickBox(nameplate.interruptFrame.kickBox, kickAssignment, true, willBeReflected, isTargetPriority)
     ConfigureKickBox(nameplate.interruptFrame.nextKickBox, nextKickAssignment, false, false, false)
 
     if not kickAssignment then
@@ -777,7 +743,7 @@ local function HandleUnitSpellStart(unitId, unitState, nameplate)
         return
     end
 
-    if kickAssignment.unitId == "player" and not warrHasReflectAuraUp then 
+    if kickAssignment.unitId == "player" and not willBeReflected then
         local icon = C_Spell.GetSpellTexture(kickAssignment.spellId)
         nameplate.interruptFrame.kickBox.icon:SetTexture(icon)
         nameplate.interruptFrame.kickBox.icon:SetAlpha(1)
@@ -845,11 +811,11 @@ end
 
 ---@param nameplate SvtNameplate
 local function UpdateUnit(unitId, nameplate)
+    if not nameplate then return end
     if isTestModeActive and nameplate == testModeNameplate then return end
-    if not nameplate or not nameplate.interruptFrame then return end
 
-    local castName, _, _, startTime, endTime, _, castID, notInterruptible, spellId = UnitCastingInfo(unitId)
-    HandleReflect(nameplate, castName, castID, spellId, unitId, startTime, endTime)
+    local castName, _, _, _, endTime, _, _, notInterruptible, spellId = UnitCastingInfo(unitId)
+    local willReflectSpell, canReflectIt = HandleReflect(nameplate, castName, spellId, unitId, endTime)
 
     local unitGuid = UnitGUID(unitId)
     local unitState = unitStates[unitGuid]
@@ -860,7 +826,7 @@ local function UpdateUnit(unitId, nameplate)
 
     if not unitState.isCasting and isCasting then
         unitState.isCasting = true
-        HandleUnitSpellStart(unitId, unitState, nameplate)
+        HandleUnitSpellStart(unitId, unitState, nameplate, willReflectSpell, canReflectIt)
     elseif unitState.isCasting and not isCasting or not unitState.isCasting then
         unitState.isCasting = false
         HandleUnitSpellEnd(unitId, unitState, nameplate)
@@ -1014,7 +980,6 @@ local function SendAndRequestInitialData()
 
                 if NS.interruptSpecInfoTable[specId] ~= nil then
                     local specData = NS.interruptSpecInfoTable[specId]
-                    veganPartyData[myGuid].specId = specId
                     veganPartyData[myGuid].interruptSpellId = specData.InterruptSpell
                 end
             end
@@ -1221,10 +1186,7 @@ local function CreateParseResultWindow()
     frame:SetScript("OnDragStart", frame.StartMoving)
     frame:SetScript("OnDragStop", frame.StopMovingOrSizing)
 
-    -- *** FIX START ***
-    -- The old line was unreliable. This directly accesses the TitleText created by the template.
     frame.TitleText:SetText("SVT MRT Parse Results")
-    -- *** FIX END ***
 
     -- Scroll Frame for Content
     local scrollFrame = CreateFrame("ScrollFrame", "$parentScrollFrame", frame, "UIPanelScrollFrameTemplate")
@@ -1257,7 +1219,6 @@ local function ToggleParseResultWindow()
     if parseResultFrame:IsShown() then
         parseResultFrame:Hide()
     else
-        TryParseMrt() -- Re-parse the note to ensure data is fresh
         local formattedText = FormatParseResults()
         parseResultFrame.text:SetText(formattedText)
         parseResultFrame:Show()
@@ -1389,15 +1350,16 @@ local function EventHandler(self, event, ...)
             for _, v in pairs(info.addedAuras) do
                 if v.spellId == 23920 then
                     veganPartyData[guid].reflectAuraInstanceId = v.auraInstanceID
-                    veganPartyData[guid].hasReflect = true
+                    veganPartyData[guid].hasReflectUp = true
                     veganPartyData[guid].reflectEndTime = v.expirationTime
+                    UpdateAllUnits()
                 end
             end
         end
         if info.removedAuraInstanceIDs and veganPartyData[guid]  then
             for _, v in pairs(info.removedAuraInstanceIDs) do
                 if veganPartyData[guid].reflectAuraInstanceId == v then
-                    veganPartyData[guid].hasReflect = false
+                    veganPartyData[guid].hasReflectUp = false
                     veganPartyData[guid].reflectEndTime = nil
                 end
             end
@@ -1424,8 +1386,6 @@ local function EventHandler(self, event, ...)
                     veganPartyData[guid] = {}
                     veganPartyData[guid].unitID = GetUnitIDInPartyOrSelfByGuid(guid)
                 end
-
-                veganPartyData[guid].specId = specId
 
                 if NS.interruptSpecInfoTable[specId] ~= nil then
                     local specData = NS.interruptSpecInfoTable[specId]
@@ -1474,6 +1434,9 @@ local function InitAddon()
 end
 
 local function ShouldInitAddon()
+    local isTestZone = WorldMapFrame:GetMapID() == 947
+    if isTestZone then return true end
+
     local inInstance = IsInInstance()
     if not inInstance then return false end
 
